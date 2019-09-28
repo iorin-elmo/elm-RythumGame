@@ -24,12 +24,7 @@ type alias Model =
     , startTime : Int
     , spentTime : Int
     , bpm       : Int
-    , isPressed :
-        { leftLane        : Bool
-        , middleLeftLane  : Bool
-        , middleRightLane : Bool
-        , rightLane       : Bool
-        }
+    , isPressed : LaneMap Bool
     , speed : Int
     , grades : Evaluation -> Int
     }
@@ -47,12 +42,7 @@ initialModel =
     , startTime = 0        --[ms]
     , spentTime = 1000     --[ms]
     , bpm       = 120      --[beats/min]
-    , isPressed =
-        { leftLane        = False
-        , middleLeftLane  = False
-        , middleRightLane = False
-        , rightLane       = False
-        }
+    , isPressed = Lane.fill False
     , speed = 0
     , grades = initialGrades
     }
@@ -80,6 +70,24 @@ initialScore lane =
                 [Tap 480, Tap 840, Tap 1080]
                 [Hold 5400 7200]
         None        -> []
+
+initialGrades evaluation =
+    case evaluation of
+        CriticalPerfect -> 0
+        Perfect         -> 0
+        Great           -> 0
+        Good            -> 0
+        Miss            -> 0
+        TooFar          -> 0
+
+initialGrades evaluation =
+    case evaluation of
+        CriticalPerfect -> 0
+        Perfect         -> 0
+        Great           -> 0
+        Good            -> 0
+        Miss            -> 0
+        TooFar          -> 0
 
 initialGrades evaluation =
     case evaluation of
@@ -161,6 +169,18 @@ setLaneState lane bool model =
     in
         { model | isPressed = newIsPressed }
 
+{-
+setVisibleNotes : Lane -> Model -> Model
+setVisibleNotes lane =
+    case model. of
+-}
+
+{-
+setVisibleNotes : Lane -> Model -> Model
+setVisibleNotes lane =
+    case model. of
+-}
+
 evaluate : Lane -> Model -> Model
 evaluate lane model =
     let
@@ -180,10 +200,10 @@ evaluate lane model =
                 Hold start end ->
                     TooFar
         allEvaluate=
-            List.map (\_->msToEvaluation model.spentTime) (model.score lane)
+            List.map (\_->msToEvaluation model.spentTime) (Lane.get lane model.score)
     in
         model
-        
+
 --View--
 
 view : Model -> Html Msg
@@ -253,22 +273,19 @@ view model =
             |> List.concat
 
         changeLaneColor =
-            List.indexedMap
-                (\n pressed ->
-                    rect
-                        [ x (String.fromInt (n*50))
-                        , y "0"
-                        , width "50"
-                        , height "120"
-                        , fill (if pressed then "orange" else "white")
-                        ]
-                        []
-                )
-                [ model.isPressed.leftLane
-                , model.isPressed.middleLeftLane
-                , model.isPressed.middleRightLane
-                , model.isPressed.rightLane
-                ]
+            model.isPressed
+                |> Lane.toList
+                |> List.map
+                    (\(lane, pressed) ->
+                        rect
+                            [ x (lane |> lanePosition |> String.fromInt)
+                            , y "0"
+                            , width "50"
+                            , height (judgeLine |> String.fromInt)
+                            , fill (if pressed then "orange" else "white")
+                            ]
+                            []
+                    )
 
     in
         div[]
@@ -286,7 +303,62 @@ view model =
                     ]
             ]
 
-stringToLane : String -> Lane
+pixelPerBeatUnit = 1 -- [px / beatUnit]
+judgeLine = 120 -- [px]
+
+lanePosition lane = -- [px]
+    case lane of
+        Left        -> 0
+        MiddleLeft  -> 50
+        MiddleRight -> 100
+        Right       -> 150
+
+laneColor lane =
+    case lane of
+        Left        -> "Blue"
+        MiddleLeft  -> "Red"
+        MiddleRight -> "Red"
+        Right       -> "Blue"
+
+drawTap lane relativeBeats = -- レーン，判定線までの残り [beatUnit]
+    [ rect
+        [ x <| String.fromInt <| lanePosition lane
+        , y <| String.fromInt (judgeLine - (relativeBeats * pixelPerBeatUnit))
+        , width "50"
+        , height "5"
+        , fill <| laneColor lane
+        ]
+        []
+    ]
+
+drawHold lane start end =
+    [ rect
+        [ x <| String.fromInt <| lanePosition lane
+        , y <| String.fromInt <| (judgeLine - (start * pixelPerBeatUnit))
+        , width "50"
+        , height "5"
+        , fill <| laneColor lane
+        ]
+        []
+        , rect
+        [ x <| String.fromInt <| lanePosition lane
+        , y <| String.fromInt <| (judgeLine - (end * pixelPerBeatUnit))
+        , width "50"
+        , height "5"
+        , fill <| laneColor lane
+        ]
+        []
+        , rect
+        [ x <| String.fromInt <| (lanePosition lane) + 5
+        , y <| String.fromInt <| (judgeLine - (end * pixelPerBeatUnit))
+        , width "40"
+        , height <| String.fromInt <| (end - start) * pixelPerBeatUnit
+        , fill <| laneColor lane
+        ]
+        []
+    ]
+
+stringToLane : String -> Maybe Lane
 stringToLane str =
     case str of
         "f" -> Left
