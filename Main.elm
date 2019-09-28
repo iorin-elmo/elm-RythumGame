@@ -12,103 +12,73 @@ import Svg.Attributes exposing (width, height, viewBox, x, y, fill)
 import Time exposing (Posix, every, posixToMillis)
 import Task exposing (perform)
 
+import Lane exposing (Lane(..), LaneMap)
+
 type alias Model =
     { pressedKey   : String
-    , score        : Lane -> List Notes
-    , visibleNotes :
-        { leftNotes        : List Notes
-        , middleLeftNotes  : List Notes
-        , middleRightNotes : List Notes
-        , rightNotes       : List Notes
-        }
+   , score        : LaneMap (List Notes)
+    , visibleNotes : LaneMap (List Notes)
     , startTime : Int
     , spentTime : Int
     , bpm       : Int
     , isPressed : LaneMap Bool
     , speed : Int
-    , grades : Evaluation -> Int
+    , visibleEvaluation : Evaluation
+    , grades :
+        { criticalPerfect : Int
+        , perfect : Int
+        , great : Int
+        , good : Int
+        , miss : Int
+        }
     }
 
 initialModel : Model
 initialModel =
     { pressedKey   = ""
     , score        = initialScore
-    , visibleNotes =
-        { leftNotes        = []
-        , middleLeftNotes  = []
-        , middleRightNotes = []
-        , rightNotes       = []
-        }
+    , visibleNotes = Lane.fill []
     , startTime = 0        --[ms]
     , spentTime = 1000     --[ms]
     , bpm       = 120      --[beats/min]
     , isPressed = Lane.fill False
     , speed = 0
-    , grades = initialGrades
+    , visibleEvaluation = TooFar
+    , grades =
+        { criticalPerfect = 0
+        , perfect = 0
+        , great = 0
+        , good = 0
+        , miss = 0
+        }
     }
 
 type Notes
-    = Tap Int             --[beats/120]
-    | Hold Int Int        --[beats/120]
+    = Tap Int             --[beatUnit]
+    | Hold Int Int        --[beatUnit]
 
-initialScore lane =
-    case lane of
-        Left        ->
-            List.append
-                [Tap 120, Tap 480, Tap 1200]
-                [Hold 1320 1800]
-        MiddleLeft  ->
-            List.append
-                [Tap 240, Tap 600, Tap 1200]
-                [Hold 1800 3000]
-        MiddleRight ->
-            List.append
-                [Tap 360, Tap 720, Tap 960 ]
-                [Hold 3600 5400]
-        Right       ->
-            List.append
-                [Tap 480, Tap 840, Tap 1080]
-                [Hold 5400 7200]
-        None        -> []
+beatUnit = 120 -- [ / beat]
 
-initialGrades evaluation =
-    case evaluation of
-        CriticalPerfect -> 0
-        Perfect         -> 0
-        Great           -> 0
-        Good            -> 0
-        Miss            -> 0
-        TooFar          -> 0
-
-initialGrades evaluation =
-    case evaluation of
-        CriticalPerfect -> 0
-        Perfect         -> 0
-        Great           -> 0
-        Good            -> 0
-        Miss            -> 0
-        TooFar          -> 0
-
-initialGrades evaluation =
-    case evaluation of
-        CriticalPerfect -> 0
-        Perfect         -> 0
-        Great           -> 0
-        Good            -> 0
-        Miss            -> 0
-        TooFar          -> 0
+initialScore =
+    Lane.fill []
+        |> Lane.put Left (
+            [Tap 120, Tap 480, Tap 1200] ++
+            [Hold 1320 1800])
+        |> Lane.put MiddleLeft (
+            [Tap 240, Tap 600, Tap 1200] ++
+            [Hold 1800 3000])
+        |> Lane.put MiddleRight (
+            [Tap 360, Tap 720, Tap 960 ] ++
+            [Hold 3600 5400])
+        |> Lane.put Right (
+            [Tap 480, Tap 840, Tap 1080] ++
+            [Hold 5400 7200])
 
 type Msg
     = Pressed Lane
     | Released Lane
     | Tick Posix
     | Start Posix
-
-type Lane
-    = Left
-    | MiddleLeft
-    | MiddleRight
-    | Right
     | None
 
 type Evaluation
@@ -149,31 +119,10 @@ update msg model =
             , Cmd.none
             )
 
-{-
-setVisibleNotes : Lane -> Model -> Model
-setVisibleNotes lane =
-    case model. of
--}
-
-setLaneState: Lane -> Bool -> Model -> Model
-setLaneState lane bool model =
-    let
-        oldIsPressed = model.isPressed
-        newIsPressed =
-            case lane of
-                Left        -> { oldIsPressed | leftLane        = bool }
-                MiddleLeft  -> { oldIsPressed | middleLeftLane  = bool }
-                MiddleRight -> { oldIsPressed | middleRightLane = bool }
-                Right       -> { oldIsPressed | rightLane       = bool }
-                None        ->   oldIsPressed
-    in
-        { model | isPressed = newIsPressed }
-
-{-
-setVisibleNotes : Lane -> Model -> Model
-setVisibleNotes lane =
-    case model. of
--}
+        None ->
+            ( model
+            , Cmd.none
+            )
 
 {-
 setVisibleNotes : Lane -> Model -> Model
@@ -204,73 +153,33 @@ evaluate lane model =
     in
         model
 
+setLaneState: Lane -> Bool -> Model -> Model
+setLaneState lane bool model =
+    { model | isPressed = model.isPressed |> Lane.put lane bool }
+
+
 --View--
 
 view : Model -> Html Msg
 view model =
     let
-        laneWidth lane=
-            case lane of
-                Left        -> 0
-                MiddleLeft  -> 50
-                MiddleRight -> 100
-                Right       -> 150
-                None        -> 0
-
-        notesColor lane =
-            case lane of
-                Left        -> "Blue"
-                MiddleLeft  -> "Red"
-                MiddleRight -> "Red"
-                Right       -> "Blue"
-                None        -> "white"
+        spentTimeInBeats = model.spentTime * model.bpm // 60 * beatUnit // 1000
 
         drawNote : Lane -> Notes -> Int -> List (Svg Msg)
         drawNote lane notes time =
             case notes of
                 Tap n ->
-                    [ rect
-                        [ x <| String.fromInt <| laneWidth lane
-                        , y <| String.fromInt (time//20-n//model.bpm*10)
-                        , width "50"
-                        , height "5"
-                        , fill <| notesColor lane
-                        ]
-                        []
-                    ]
+                    drawTap lane (n - spentTimeInBeats)
 
                 Hold start end ->
-                    [ rect
-                        [ x <| String.fromInt <| laneWidth lane
-                        , y <| String.fromInt (time//20-start//model.bpm*10)
-                        , width "50"
-                        , height "5"
-                        , fill <| notesColor lane
-                        ]
-                        []
-                    , rect
-                        [ x <| String.fromInt <| laneWidth lane
-                        , y <| String.fromInt (time//20-end//model.bpm*10)
-                        , width "50"
-                        , height "5"
-                        , fill <| notesColor lane
-                        ]
-                        []
-                    , rect
-                        [ x <| String.fromInt <| (laneWidth lane) + 5
-                        , y <| String.fromInt (time//20-end//model.bpm*10)
-                        , width "40"
-                        , height <| String.fromInt <| (end - start)//model.bpm*10
-                        , fill <| notesColor lane
-                        ]
-                        []
-                    ]
+                    drawHold lane (start - spentTimeInBeats) (end - spentTimeInBeats)
 
         drawNotes =
             [ Left, MiddleLeft, MiddleRight, Right ]
-                |> List.concatMap (\lane -> model.score lane
-                    |> List.map (\notes -> drawNote lane notes model.spentTime))
-            |> List.concat
+                |> List.concatMap (\lane ->
+                    let laneScore = model.score |> Lane.get lane in
+                    laneScore
+                        |> List.concatMap (\notes -> drawNote lane notes model.spentTime))
 
         changeLaneColor =
             model.isPressed
@@ -294,7 +203,7 @@ view model =
                 <| List.append drawNotes
                     [ rect
                         [ x "0"
-                        , y "120"
+                        , y (judgeLine |> String.fromInt)
                         , width "200"
                         , height "2"
                         , fill "black"
@@ -361,28 +270,28 @@ drawHold lane start end =
 stringToLane : String -> Maybe Lane
 stringToLane str =
     case str of
-        "f" -> Left
-        "g" -> MiddleLeft
-        "h" -> MiddleRight
-        "j" -> Right
-        _   -> None
+        "f" -> Just Left
+        "g" -> Just MiddleLeft
+        "h" -> Just MiddleRight
+        "j" -> Just Right
+        _   -> Nothing
 
 keyDownDecoder =
     (field "key" string)
         |> D.map stringToLane
-        |> D.map Pressed
+        |> D.map (Maybe.map Pressed >> Maybe.withDefault None)
 
 keyUpDecoder =
     (field "key" string)
         |> D.map stringToLane
-        |> D.map Released
+        |> D.map (Maybe.map Released >> Maybe.withDefault None)
 
 subscription : Model -> Sub Msg
 subscription model =
     Sub.batch
         [ onKeyDown keyDownDecoder
         , onKeyUp keyUpDecoder
-        , Time.every 30 Tick
+        , Time.every 16 Tick
         ]
 
 --Main--
