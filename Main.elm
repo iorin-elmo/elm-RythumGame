@@ -16,41 +16,27 @@ import Lane exposing (Lane(..), LaneMap)
 
 type alias Model =
     { pressedKey   : String
-   , score        : LaneMap (List Notes)
+    , score        : LaneMap (List Notes)
     , visibleNotes : LaneMap (List Notes)
     , startTime : Int
     , spentTime : Int
     , bpm       : Int
     , isPressed : LaneMap Bool
     , speed : Int
-    , visibleEvaluation : Evaluation
-    , grades :
-        { criticalPerfect : Int
-        , perfect : Int
-        , great : Int
-        , good : Int
-        , miss : Int
-        }
+    , grades : List Evaluation
     }
 
 initialModel : Model
 initialModel =
     { pressedKey   = ""
     , score        = initialScore
-    , visibleNotes = Lane.fill []
+    , visibleNotes = initialScore
     , startTime = 0        --[ms]
-    , spentTime = 1000     --[ms]
+    , spentTime = 0        --[ms]
     , bpm       = 120      --[beats/min]
     , isPressed = Lane.fill False
     , speed = 0
-    , visibleEvaluation = TooFar
-    , grades =
-        { criticalPerfect = 0
-        , perfect = 0
-        , great = 0
-        , good = 0
-        , miss = 0
-        }
+    , grades = []
     }
 
 type Notes
@@ -87,7 +73,6 @@ type Evaluation
     | Great                   -- 75%
     | Good                    -- 50%
     | Miss                    --  0%
-    | TooFar
 
 --Update--
 
@@ -104,15 +89,16 @@ update msg model =
         Released lane ->
             ( model
                 |> setLaneState lane False
-                |> evaluate lane
             , Cmd.none
             )
 
         Tick posix ->
-            ( { model | spentTime = (posixToMillis posix) - model.startTime}
---                |> setVisibleNotes
-            , Cmd.none
-            )
+            let
+                newModel = { model | spentTime = (posixToMillis posix) - model.startTime }
+            in
+                ( removeExpiredVisibleNotes newModel
+                , Cmd.none
+                )
 
         Start posix ->
             ( { model | startTime = posixToMillis posix }
@@ -124,34 +110,101 @@ update msg model =
             , Cmd.none
             )
 
-{-
-setVisibleNotes : Lane -> Model -> Model
-setVisibleNotes lane =
-    case model. of
--}
+getSpentTimeInBeats model = model.spentTime * model.bpm // 60 * beatUnit // 1000
+
+removeExpiredVisibleNotes : Model -> Model
+removeExpiredVisibleNotes model =
+    let
+        spentTimeInBeats = getSpentTimeInBeats model
+
+        notesTimeCheck : Notes -> Bool
+        notesTimeCheck notes=
+            case notes of
+                Tap time->
+                    ( spentTimeInBeats - time > 120 )
+                Hold start end->
+                    ( spentTimeInBeats - end > 120 )
+
+        listNotesUpdater oldNotes = listNotesUpdaterHelp oldNotes []
+        listNotesUpdaterHelp : List Notes -> List Notes -> List Notes
+        listNotesUpdaterHelp newNotes oldNotes =
+            case oldNotes of
+                [] -> newNotes
+                hd :: tl ->
+                    listNotesUpdaterHelp
+                        (if (notesTimeCheck hd) then (hd :: newNotes) else newNotes) tl
+
+        newVisibleNotes =
+            [ Left, MiddleLeft, MiddleRight, MiddleRight ]
+                |> List.foldl (\lane map -> Lane.update lane listNotesUpdater map) model.visibleNotes
+    in
+        { model | visibleNotes = newVisibleNotes }
+
 
 evaluate : Lane -> Model -> Model
 evaluate lane model =
     let
-        msToEvaluation : Int -> Notes -> Evaluation
+        beatUnitToMillis beatUnits = beatUnits * 1000 * 60 // model.bpm // beatUnit
+        timeError beatUnits = abs (beatUnitToMillis beatUnits - model.spentTime)
+
+        msToEvaluation : Int -> Notes -> Maybe Evaluation
         msToEvaluation pressedTime notes =
             case notes of
                 Tap notesTime ->
-                    let
-                        timeRange=abs (notesTime - pressedTime)
-                    in
-                        if (timeRange<=33) then CriticalPerfect
-                        else if (timeRange<=50) then Perfect
-                        else if (timeRange<=100) then Great
-                        else if (timeRange<=200) then Good
-                        else if (timeRange<=400) then Miss
-                        else TooFar
+                    if (timeError notesTime<=33) then Just CriticalPerfect
+                    else if (timeError notesTime<=50) then Just Perfect
+                    else if (timeError notesTime<=100) then Just Great
+                    else if (timeError notesTime<=200) then Just Good
+                    else if (timeError notesTime<=400) then Just Miss
+                    else Nothing
                 Hold start end ->
-                    TooFar
-        allEvaluate=
-            List.map (\_->msToEvaluation model.spentTime) (Lane.get lane model.score)
+                    if (timeError start<=33) then Just CriticalPerfect
+                    else if (timeError start<=50) then Just Perfect
+                    else if (timeError start<=100) then Just Great
+                    else if (timeError start<=200) then Just Good
+                    else if (timeError start<=400) then Just Miss
+                    else Nothing
+
+        notesComparison : Notes -> Notes -> Notes
+        notesComparison note1 note2 =
+            let
+                noteToError note =
+                    case note of
+                        Tap n -> timeError n
+                        Hold start end -> timeError start
+            in
+                if noteToError note1 < noteToError note2 then note1 else note2
+
+        accumrator : Notes -> ( Maybe Notes, List Notes ) -> ( Maybe Notes, List Notes )
+        accumrator note ( min, others ) =
+            let
+                newMin = case min of
+                    Nothing -> Just note
+                    Just old -> notesComparison note old |> Just
+                newOthers =
+                    if newMin == min
+                    then others
+                    else case min of
+                        Nothing -> others
+                        Just n -> n :: others
+            in
+                ( newMin, newOthers )
+
+        ( decideNoteForEvaluating, newVisibleNotes ) = List.foldl accumrator ( Nothing, [] ) (Lane.get lane model.visibleNotes)
+
+        evaluateResult =
+            decideNoteForEvaluating
+                |> Maybe.andThen (msToEvaluation model.spentTime)
     in
-        model
+        case evaluateResult of
+            Nothing -> model
+            Just grade -> { model
+                | grades = grade :: model.grades
+                , visibleNotes =
+                    model.visibleNotes
+                        |> Lane.put lane newVisibleNotes
+                }
+
 
 setLaneState: Lane -> Bool -> Model -> Model
 setLaneState lane bool model =
@@ -163,10 +216,10 @@ setLaneState lane bool model =
 view : Model -> Html Msg
 view model =
     let
-        spentTimeInBeats = model.spentTime * model.bpm // 60 * beatUnit // 1000
+        spentTimeInBeats = getSpentTimeInBeats model
 
-        drawNote : Lane -> Notes -> Int -> List (Svg Msg)
-        drawNote lane notes time =
+        drawNote : Lane -> Notes -> List (Svg Msg)
+        drawNote lane notes =
             case notes of
                 Tap n ->
                     drawTap lane (n - spentTimeInBeats)
@@ -177,9 +230,9 @@ view model =
         drawNotes =
             [ Left, MiddleLeft, MiddleRight, Right ]
                 |> List.concatMap (\lane ->
-                    let laneScore = model.score |> Lane.get lane in
+                    let laneScore = model.visibleNotes |> Lane.get lane in
                     laneScore
-                        |> List.concatMap (\notes -> drawNote lane notes model.spentTime))
+                        |> List.concatMap (\notes -> drawNote lane notes))
 
         changeLaneColor =
             model.isPressed
@@ -195,6 +248,10 @@ view model =
                             ]
                             []
                     )
+
+--        viewGrades : List Evaluation -> Html Msg
+--        viewGrades grades =
+
 
     in
         div[]

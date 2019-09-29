@@ -4,6 +4,7 @@ module Lane exposing
     , fill
     , get
     , put
+    , update
     , toList
     )
 
@@ -49,6 +50,13 @@ put lane e (LaneMap map) =
 
         Right ->
             LaneMap { map | right = e }
+
+update : Lane -> (a -> a) -> LaneMap a -> LaneMap a
+update lane updater map =
+    map
+        |> get lane
+        |> updater
+        |> (\content->put lane content map)
 
 toList : LaneMap a -> List ( Lane, a )
 toList (LaneMap map) =
