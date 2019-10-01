@@ -48,7 +48,7 @@ beatUnit = 120 -- [ / beat]
 initialScore =
     Lane.fill []
         |> Lane.put Left (
-            [Tap 120, Tap 480, Tap 1200] ++
+            [Tap 120, Tap 140, Tap 160, Tap 480, Tap 1200] ++
             [Hold 1320 1800])
         |> Lane.put MiddleLeft (
             [Tap 240, Tap 600, Tap 1200] ++
@@ -83,7 +83,6 @@ update msg model =
             ( model
                 |> setLaneState lane True
                 |> evaluate lane
-                |> Debug.log "model"
             , Cmd.none
             )
 
@@ -166,32 +165,16 @@ evaluate lane model =
                     else if (timeError start<=400) then Just Miss
                     else Nothing
 
-        notesComparison : Notes -> Notes -> Notes
-        notesComparison note1 note2 =
-            let
-                noteToError note =
-                    case note of
-                        Tap n -> timeError n
-                        Hold start end -> timeError start
-            in
-                if noteToError note1 < noteToError note2 then note1 else note2
+        noteToError note =
+            case note of
+                Tap n -> timeError n
+                Hold start end -> timeError start
 
-        accumrator : Notes -> ( Maybe Notes, List Notes ) -> ( Maybe Notes, List Notes )
-        accumrator note ( min, others ) =
-            let
-                newMin = case min of
-                    Nothing -> Just note
-                    Just old -> notesComparison note old |> Just
-                newOthers =
-                    if newMin == min
-                    then others
-                    else case min of
-                        Nothing -> others
-                        Just n -> n :: others
-            in
-                ( newMin, newOthers )
+        sortedNotes = Lane.get lane model.visibleNotes
+            |> List.sortBy noteToError
 
-        ( decideNoteForEvaluating, newVisibleNotes ) = List.foldr accumrator ( Nothing, [] ) (Lane.get lane model.visibleNotes)
+        decideNoteForEvaluating = List.head sortedNotes
+        newVisibleNotes = List.drop 1 sortedNotes
 
         evaluateResult =
             decideNoteForEvaluating
