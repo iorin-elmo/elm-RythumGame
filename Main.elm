@@ -83,6 +83,7 @@ update msg model =
             ( model
                 |> setLaneState lane True
                 |> evaluate lane
+                |> Debug.log "model"
             , Cmd.none
             )
 
@@ -190,7 +191,7 @@ evaluate lane model =
             in
                 ( newMin, newOthers )
 
-        ( decideNoteForEvaluating, newVisibleNotes ) = List.foldl accumrator ( Nothing, [] ) (Lane.get lane model.visibleNotes)
+        ( decideNoteForEvaluating, newVisibleNotes ) = List.foldr accumrator ( Nothing, [] ) (Lane.get lane model.visibleNotes)
 
         evaluateResult =
             decideNoteForEvaluating
