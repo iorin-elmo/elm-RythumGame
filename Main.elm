@@ -24,6 +24,7 @@ type alias Model =
     , isPressed : LaneMap Bool
     , speed : Int
     , grades : List Evaluation
+    , phase : Phase
     }
 
 initialModel : Model
@@ -37,6 +38,7 @@ initialModel =
     , isPressed = Lane.fill False
     , speed = 0
     , grades = []
+    , phase = Play
     }
 
 type Notes
@@ -48,17 +50,17 @@ beatUnit = 120 -- [ / beat]
 initialScore =
     Lane.fill []
         |> Lane.put Left (
-            [Tap 120, Tap 140, Tap 160, Tap 480, Tap 1200] ++
-            [Hold 1320 1800])
+            [Tap 360, Tap 520, Tap 800] ++
+            [])
         |> Lane.put MiddleLeft (
-            [Tap 240, Tap 600, Tap 1200] ++
-            [Hold 1800 3000])
+            [Tap 400, Tap 560, Tap 760] ++
+            [])
         |> Lane.put MiddleRight (
-            [Tap 360, Tap 720, Tap 960 ] ++
-            [Hold 3600 5400])
+            [Tap 440, Tap 600, Tap 720] ++
+            [])
         |> Lane.put Right (
-            [Tap 480, Tap 840, Tap 1080] ++
-            [Hold 5400 7200])
+            [Tap 480, Tap 640, Tap 680, Tap 800] ++
+            [])
 
 type Msg
     = Pressed Lane
@@ -73,6 +75,11 @@ type Evaluation
     | Great                   -- 75%
     | Good                    -- 50%
     | Miss                    --  0%
+
+type Phase
+    = Play
+    | Result
+
 
 --Update--
 
@@ -96,7 +103,9 @@ update msg model =
             let
                 newModel = { model | spentTime = (posixToMillis posix) - model.startTime }
             in
-                ( removeExpiredVisibleNotes newModel
+                ( newModel
+                    |> removeExpiredVisibleNotes
+                    |> changePhase
                 , Cmd.none
                 )
 
@@ -109,6 +118,24 @@ update msg model =
             ( model
             , Cmd.none
             )
+
+changePhase : Model -> Model
+changePhase model =
+    let
+        allNotesNumber =
+            [Left, MiddleLeft, MiddleRight, Right]
+                |> List.map (\lane->Lane.get lane model.score)
+                |> List.concat
+                |> List.length
+
+        evaluatedNotes =
+            model.grades
+                |> List.length
+
+    in
+        if allNotesNumber /= evaluatedNotes
+        then { model | phase = Play }
+        else { model | phase = Result }
 
 getSpentTimeInBeats model = model.spentTime * model.bpm // 60 * beatUnit // 1000
 
@@ -233,13 +260,8 @@ view model =
                             []
                     )
 
---        viewGrades : List Evaluation -> Html Msg
---        viewGrades grades =
-
-
-    in
-        div[]
-            [ svg[]
+        viewSvg =
+             svg[]
                 <| List.append changeLaneColor
                 <| List.append drawNotes
                     [ rect
@@ -251,7 +273,49 @@ view model =
                         ]
                         []
                     ]
-            ]
+
+        viewGrades : Html Msg
+        viewGrades  =
+            let
+                evaruationToString ev =
+                    case ev of
+                        CriticalPerfect -> "CriticalPerfect"
+                        Perfect         -> "Perfect"
+                        Great           -> "Great"
+                        Good            -> "Good"
+                        Miss            -> "Miss"
+
+                viewEvaluation ev =
+                    [ text <| (evaruationToString ev) ++ " : "
+                    , model.grades
+                        |> List.filter ((==) ev)
+                        |> List.length
+                        |> String.fromInt
+                        |> text
+                    , br[][]
+                    ]
+            in
+                div[]
+                    <| List.append
+                    [ text "Result"
+                    , br[][]
+                    ]
+                    (
+                        [CriticalPerfect, Perfect, Great, Good, Miss]
+                            |> List.map viewEvaluation
+                            |> List.concat
+                    )
+
+    in
+        case model.phase of
+            Play ->
+                div[]
+                    [ viewSvg, br[][]
+                    ]
+            Result ->
+                div[]
+                    [ viewGrades
+                    ]
 
 pixelPerBeatUnit = 1 -- [px / beatUnit]
 judgeLine = 120 -- [px]
@@ -334,6 +398,7 @@ subscription model =
         , onKeyUp keyUpDecoder
         , Time.every 16 Tick
         ]
+
 
 --Main--
 
