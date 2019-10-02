@@ -324,10 +324,37 @@ view model =
                             []
                     )
 
+        holdColorChangeHelper : Lane -> ( Maybe Evaluation, Maybe Notes ) -> List (Svg Msg)
+        holdColorChangeHelper lane holdEv =
+            case holdEv of
+                ( Just _, Just _ ) ->
+                    [ rect
+                        [ x (lane |> lanePosition |> String.fromInt)
+                        , y (judgeLine + 2 |> String.fromInt)
+                        , width "50"
+                        , height "35"
+                        , fill "white"
+                        ][]
+                    ]
+                _ -> []
+
+        holdColorChanger =
+            [ Left, MiddleLeft, MiddleRight, Right ]
+                |> List.concatMap
+                    (\lane ->
+                        let
+                            holdNotes =
+                                model.holdEvaluation
+                                    |> Lane.get lane
+                        in
+                            holdColorChangeHelper lane holdNotes
+                    )
+
         viewSvg =
              svg[]
                 <| List.append changeLaneColor
                 <| List.append drawNotes
+                <| List.append holdColorChanger
                     [ rect
                         [ x "0"
                         , y (judgeLine |> String.fromInt)
