@@ -18,6 +18,7 @@ type alias Model =
     { pressedKey   : String
     , score        : LaneMap (List Notes)
     , visibleNotes : LaneMap (List Notes)
+    , holdEvaluation : LaneMap ( Maybe Evaluation, Maybe Notes )
     , startTime : Int
     , spentTime : Int
     , bpm       : Int
@@ -32,9 +33,10 @@ initialModel =
     { pressedKey   = ""
     , score        = initialScore
     , visibleNotes = initialScore
+    , holdEvaluation = Lane.fill ( Nothing, Nothing )
     , startTime = 0        --[ms]
     , spentTime = 0        --[ms]
-    , bpm       = 120      --[beats/min]
+    , bpm       = 60      --[beats/min]
     , isPressed = Lane.fill False
     , speed = 0
     , grades = []
@@ -51,7 +53,7 @@ initialScore =
     Lane.fill []
         |> Lane.put Left (
             [Tap 360, Tap 520, Tap 800] ++
-            [])
+            [Hold 180 240])
         |> Lane.put MiddleLeft (
             [Tap 400, Tap 560, Tap 760] ++
             [])
@@ -96,6 +98,7 @@ update msg model =
         Released lane ->
             ( model
                 |> setLaneState lane False
+                |> holdEndEvaluate lane
             , Cmd.none
             )
 
@@ -201,11 +204,23 @@ evaluate lane model =
             |> List.sortBy noteToError
 
         decideNoteForEvaluating = List.head sortedNotes
-        newVisibleNotes = List.drop 1 sortedNotes
+
+        newVisibleNotes =
+            case decideNoteForEvaluating of
+                Just (Hold _ _) ->
+                    model.visibleNotes
+                        |> Lane.get lane
+
+                _ -> List.drop 1 sortedNotes
 
         evaluateResult =
             decideNoteForEvaluating
                 |> Maybe.andThen (msToEvaluation model.spentTime)
+
+        holdForEvaluating =
+            case decideNoteForEvaluating of
+                Just (Hold n m) -> ( evaluateResult, Just (Hold n m) )
+                _                  -> ( Nothing, Nothing )
     in
         case evaluateResult of
             Nothing -> model
@@ -214,7 +229,56 @@ evaluate lane model =
                 , visibleNotes =
                     model.visibleNotes
                         |> Lane.put lane newVisibleNotes
+                , holdEvaluation =
+                    model.holdEvaluation
+                        |> Lane.put lane holdForEvaluating
                 }
+
+holdEndEvaluate : Lane -> Model -> Model
+holdEndEvaluate lane model =
+    let
+        beatUnitToMillis beatUnits = beatUnits * 1000 * 60 // model.bpm // beatUnit
+        timeError beatUnits = abs (beatUnitToMillis beatUnits - model.spentTime)
+
+        msToEvaluation : ( Maybe Evaluation, Maybe Notes ) -> Maybe Evaluation
+        msToEvaluation holdNotes =
+            case holdNotes of
+                ( evaluation, Just (Hold start end) ) ->
+                    if (timeError end<=200)
+                    then
+                        evaluation
+                    else
+                        if (timeError end<=400)
+                        then Just Miss
+                        else Nothing
+
+                _ -> Nothing
+
+        evaluateResult =
+            model.holdEvaluation
+                |> Lane.get lane
+                |> msToEvaluation
+
+        visibleNotesUpdater list =
+            case model.holdEvaluation |> Lane.get lane of
+                ( ev, Just (Hold start end) ) ->
+                    list
+                        |> List.filter ((/=) (Hold start end))
+
+                _ -> list
+
+    in
+        { model |
+          visibleNotes =
+            model.visibleNotes
+                |> Lane.update lane visibleNotesUpdater
+        , holdEvaluation = model.holdEvaluation
+            |> Lane.put lane ( Nothing, Nothing )
+        , grades =
+            case evaluateResult of
+                Nothing -> model.grades
+                Just ev -> ev :: model.grades
+        }
 
 
 setLaneState: Lane -> Bool -> Model -> Model
