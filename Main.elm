@@ -12,17 +12,18 @@ import Svg.Attributes exposing (width, height, viewBox, x, y, fill)
 import Time exposing (Posix, every, posixToMillis)
 import Task exposing (perform)
 
-import Lane exposing (Lane(..), LaneMap)
+import ListWrapper.Dict as Dict exposing (Dict)
+import ListWrapper.Set as Set exposing (Set)
 
 type alias Model =
     { pressedKey   : String
-    , score        : LaneMap (List Notes)
-    , visibleNotes : LaneMap (List Notes)
-    , holdEvaluation : LaneMap ( Maybe Evaluation, Maybe Notes )
+    , score        : Dict Lane (List Notes)
+    , visibleNotes : Dict Lane (List Notes)
+    , holdEvaluation : Dict Lane ( Evaluation, Notes )
     , startTime : Int
     , spentTime : Int
     , bpm       : Int
-    , isPressed : LaneMap Bool
+    , isPressed : Set Lane
     , speed : Int
     , grades : List Evaluation
     , phase : Phase
@@ -31,13 +32,13 @@ type alias Model =
 initialModel : Model
 initialModel =
     { pressedKey   = ""
-    , score        = initialScore
+    , score        = Debug.log "initialScore" initialScore
     , visibleNotes = initialScore
-    , holdEvaluation = Lane.fill ( Nothing, Nothing )
+    , holdEvaluation = Dict.empty
     , startTime = 0        --[ms]
     , spentTime = 0        --[ms]
     , bpm       = 60      --[beats/min]
-    , isPressed = Lane.fill False
+    , isPressed = Set.empty
     , speed = 0
     , grades = []
     , phase = Play
@@ -47,22 +48,21 @@ type Notes
     = Tap Int             --[beatUnit]
     | Hold Int Int        --[beatUnit]
 
+type Lane
+    = Left
+    | MiddleLeft
+    | MiddleRight
+    | Right
+
 beatUnit = 120 -- [ / beat]
 
 initialScore =
-    Lane.fill []
-        |> Lane.put Left (
-            [Tap 360, Tap 520, Tap 800] ++
-            [Hold 180 240])
-        |> Lane.put MiddleLeft (
-            [Tap 400, Tap 560, Tap 760] ++
-            [])
-        |> Lane.put MiddleRight (
-            [Tap 440, Tap 600, Tap 720] ++
-            [])
-        |> Lane.put Right (
-            [Tap 480, Tap 640, Tap 680, Tap 800] ++
-            [])
+    Dict.fromList
+        [ ( Left, [ Hold 180 240, Tap 360, Tap 520, Tap 800 ] )
+        , ( MiddleLeft, [ Tap 400, Tap 560, Tap 760 ] )
+        , ( MiddleRight, [ Tap 440, Tap 600, Tap 720 ] )
+        , ( Right, [ Tap 480, Tap 640, Tap 680, Tap 800 ] )
+        ]
 
 type Msg
     = Pressed Lane
@@ -126,10 +126,10 @@ changePhase : Model -> Model
 changePhase model =
     let
         allNotesNumber =
-            [Left, MiddleLeft, MiddleRight, Right]
-                |> List.map (\lane->Lane.get lane model.score)
-                |> List.concat
-                |> List.length
+            model.score
+                |> Dict.values
+                |> List.map List.length
+                |> List.sum
 
         evaluatedNotes =
             model.grades
@@ -165,8 +165,10 @@ removeExpiredVisibleNotes model =
                         (if (notesTimeCheck hd) then (hd :: newNotes) else newNotes) tl
 
         newVisibleNotes =
-            [ Left, MiddleLeft, MiddleRight, MiddleRight ]
-                |> List.foldl (\lane map -> Lane.update lane listNotesUpdater map) model.visibleNotes
+            model.visibleNotes
+                |> Dict.toList
+                |> List.map (\( lane, notes ) -> ( lane, listNotesUpdater notes ))
+                |> Dict.fromList
     in
         { model | visibleNotes = newVisibleNotes }
 
@@ -200,8 +202,11 @@ evaluate lane model =
                 Tap n -> timeError n
                 Hold start end -> timeError start
 
-        sortedNotes = Lane.get lane model.visibleNotes
-            |> List.sortBy noteToError
+        sortedNotes =
+            model.visibleNotes
+                |> Dict.get lane
+                |> Maybe.withDefault []
+                |> List.sortBy noteToError
 
         decideNoteForEvaluating = List.head sortedNotes
 
@@ -209,29 +214,27 @@ evaluate lane model =
             case decideNoteForEvaluating of
                 Just (Hold _ _) ->
                     model.visibleNotes
-                        |> Lane.get lane
+                        |> Dict.get lane
+                        |> Maybe.withDefault []
 
                 _ -> List.drop 1 sortedNotes
 
-        evaluateResult =
-            decideNoteForEvaluating
-                |> Maybe.andThen (msToEvaluation model.spentTime)
-
         holdForEvaluating =
-            case decideNoteForEvaluating of
-                Just (Hold n m) -> ( evaluateResult, Just (Hold n m) )
-                _                  -> ( Nothing, Nothing )
+            decideNoteForEvaluating
+                |> Maybe.andThen (\hold -> msToEvaluation model.spentTime hold
+                    |> Maybe.map (\grade -> ( grade, hold )))
+
     in
-        case evaluateResult of
+        case holdForEvaluating of
             Nothing -> model
-            Just grade -> { model
+            Just ( grade, hold ) -> { model
                 | grades = grade :: model.grades
                 , visibleNotes =
                     model.visibleNotes
-                        |> Lane.put lane newVisibleNotes
+                        |> Dict.insert lane newVisibleNotes
                 , holdEvaluation =
                     model.holdEvaluation
-                        |> Lane.put lane holdForEvaluating
+                        |> Dict.insert lane ( grade, hold )
                 }
 
 holdEndEvaluate : Lane -> Model -> Model
@@ -240,40 +243,46 @@ holdEndEvaluate lane model =
         beatUnitToMillis beatUnits = beatUnits * 1000 * 60 // model.bpm // beatUnit
         timeError beatUnits = abs (beatUnitToMillis beatUnits - model.spentTime)
 
-        msToEvaluation : ( Maybe Evaluation, Maybe Notes ) -> Maybe Evaluation
+        msToEvaluation : ( Evaluation, Notes ) -> Maybe Evaluation
         msToEvaluation holdNotes =
             case holdNotes of
-                ( evaluation, Just (Hold start end) ) ->
-                    if (timeError end<=200)
+                ( evaluation, Hold start end ) ->
+                    if (timeError end <= 200)
                     then
-                        evaluation
+                        Just evaluation
                     else
-                        if (timeError end<=400)
+                        if (timeError end <= 400)
                         then Just Miss
                         else Nothing
-
                 _ -> Nothing
 
         evaluateResult =
             model.holdEvaluation
-                |> Lane.get lane
-                |> msToEvaluation
+                |> Dict.get lane
+                |> Maybe.andThen msToEvaluation
 
-        visibleNotesUpdater list =
-            case model.holdEvaluation |> Lane.get lane of
-                ( ev, Just (Hold start end) ) ->
-                    list
-                        |> List.filter ((/=) (Hold start end))
+        visibleNotesUpdater value =
+            case value of
+                Nothing ->
+                    Nothing
 
-                _ -> list
+                Just list ->
+                    case Dict.get lane model.holdEvaluation of
+                        Nothing ->
+                            Just list
 
+                        Just ( _, hold ) ->
+                            list
+                                |> List.filter ((/=) hold)
+                                |> Just
     in
         { model |
           visibleNotes =
             model.visibleNotes
-                |> Lane.update lane visibleNotesUpdater
-        , holdEvaluation = model.holdEvaluation
-            |> Lane.put lane ( Nothing, Nothing )
+                |> Dict.update lane visibleNotesUpdater
+        , holdEvaluation =
+            model.holdEvaluation
+                |> Dict.remove lane
         , grades =
             case evaluateResult of
                 Nothing -> model.grades
@@ -283,7 +292,8 @@ holdEndEvaluate lane model =
 
 setLaneState: Lane -> Bool -> Model -> Model
 setLaneState lane bool model =
-    { model | isPressed = model.isPressed |> Lane.put lane bool }
+    { model | isPressed = model.isPressed
+      |> if bool then Set.insert lane else Set.remove lane }
 
 
 --View--
@@ -303,52 +313,40 @@ view model =
                     drawHold lane (start - spentTimeInBeats) (end - spentTimeInBeats)
 
         drawNotes =
-            [ Left, MiddleLeft, MiddleRight, Right ]
-                |> List.concatMap (\lane ->
-                    let laneScore = model.visibleNotes |> Lane.get lane in
-                    laneScore
-                        |> List.concatMap (\notes -> drawNote lane notes))
+            model.visibleNotes
+                |> Dict.toList
+                |> List.concatMap (\( lane, notes ) -> List.concatMap (drawNote lane) notes)
 
         changeLaneColor =
             model.isPressed
-                |> Lane.toList
+                |> Set.toList
                 |> List.map
-                    (\(lane, pressed) ->
+                    (\lane ->
                         rect
                             [ x (lane |> lanePosition |> String.fromInt)
                             , y "0"
                             , width "50"
                             , height (judgeLine |> String.fromInt)
-                            , fill (if pressed then "orange" else "white")
+                            , fill "orange"
                             ]
                             []
                     )
 
-        holdColorChangeHelper : Lane -> ( Maybe Evaluation, Maybe Notes ) -> List (Svg Msg)
-        holdColorChangeHelper lane holdEv =
-            case holdEv of
-                ( Just _, Just _ ) ->
-                    [ rect
-                        [ x (lane |> lanePosition |> String.fromInt)
-                        , y (judgeLine + 2 |> String.fromInt)
-                        , width "50"
-                        , height "35"
-                        , fill "white"
-                        ][]
-                    ]
-                _ -> []
+        holdColorChangeHelper : Lane -> List (Svg Msg)
+        holdColorChangeHelper lane =
+            [ rect
+                [ x (lane |> lanePosition |> String.fromInt)
+                , y (judgeLine + 2 |> String.fromInt)
+                , width "50"
+                , height "35"
+                , fill "white"
+                ][]
+            ]
 
         holdColorChanger =
-            [ Left, MiddleLeft, MiddleRight, Right ]
-                |> List.concatMap
-                    (\lane ->
-                        let
-                            holdNotes =
-                                model.holdEvaluation
-                                    |> Lane.get lane
-                        in
-                            holdColorChangeHelper lane holdNotes
-                    )
+            model.holdEvaluation
+                |> Dict.keys
+                |> List.concatMap holdColorChangeHelper
 
         viewSvg =
              svg[]
