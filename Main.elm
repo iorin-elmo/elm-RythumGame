@@ -37,7 +37,7 @@ initialModel =
     , holdEvaluation = Dict.empty
     , startTime = 0        --[ms]
     , spentTime = 0        --[ms]
-    , bpm       = 60      --[beats/min]
+    , bpm       = 120      --[beats/min]
     , isPressed = Set.empty
     , speed = 0
     , grades = []
@@ -45,8 +45,8 @@ initialModel =
     }
 
 type Notes
-    = Tap Int             --[beatUnit]
-    | Hold Int Int        --[beatUnit]
+    = Tap Int             --timing[beatUnit]
+    | Hold Int Int        --startTiming[beatUnit] endTiming[beatUnit]
 
 type Lane
     = Left
@@ -55,8 +55,8 @@ type Lane
     | Right
 
 type Control
-    = End Int             --[beatUnit]
-    | ChangeBPM Int Int   --[beat/min] [beatUnit]
+    = End Int             --timing[beatUnit]
+    | ChangeBPM Int Int   --timing[beatUnit] newBPM[beat/min]
 
 beatUnit = 120 -- [ / beat]
 
@@ -69,9 +69,9 @@ initialScore =
         ]
 
 initialElements =
-    (End 920)::
-    [ ChangeBPM 120 0
-    , ChangeBPM 60 240
+    [ ChangeBPM 120 60
+    , ChangeBPM 480 120
+    , End 1840
     ]
 
 type Msg
@@ -119,6 +119,7 @@ update msg model =
                 ( newModel
                     |> removeExpiredVisibleNotes
                     |> changePhase
+                    |> changeBPM
                 , Cmd.none
                 )
 
@@ -156,6 +157,24 @@ changePhase model =
 
     in
         { model | phase = newPhase }
+
+changeBPM : Model -> Model
+changeBPM model =
+    let
+        spentTimeInBeats = getSpentTimeInBeats model
+        ( newBPM, newElements ) =
+            case model.elements |> List.head of
+                Just (ChangeBPM time bpm) ->
+                    if abs (spentTimeInBeats - time) < 3
+                        then
+                            ( bpm
+                            , model.elements
+                                |> List.drop 1
+                            )
+                        else ( model.bpm, model.elements )
+                _ -> ( model.bpm, model.elements )
+    in
+        { model | bpm = newBPM, elements = newElements }
 
 getSpentTimeInBeats model = model.spentTime * model.bpm // 60 * beatUnit // 1000
 
@@ -367,8 +386,7 @@ view model =
                     ]
                     (
                         [CriticalPerfect, Perfect, Great, Good, Miss]
-                            |> List.map viewEvaluation
-                            |> List.concat
+                            |> List.concatMap viewEvaluation
                     )
 
     in
