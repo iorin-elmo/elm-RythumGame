@@ -71,7 +71,7 @@ initialScore =
 initialElements =
     [ ChangeBPM 120 60
     , ChangeBPM 480 120
-    , End 1840
+    , End 920
     ]
 
 type Msg
@@ -165,7 +165,7 @@ changeBPM model =
         ( newBPM, newElements ) =
             case model.elements |> List.head of
                 Just (ChangeBPM time bpm) ->
-                    if abs (spentTimeInBeats - time) < 3
+                    if spentTimeInBeats >= time
                         then
                             ( bpm
                             , model.elements
@@ -174,7 +174,7 @@ changeBPM model =
                         else ( model.bpm, model.elements )
                 _ -> ( model.bpm, model.elements )
     in
-        { model | bpm = newBPM, elements = newElements }
+        { model | bpm = newBPM, elements = newElements |> Debug.log "elements" }
 
 getSpentTimeInBeats model = model.spentTime * model.bpm // 60 * beatUnit // 1000
 
