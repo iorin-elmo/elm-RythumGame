@@ -16,8 +16,7 @@ import ListWrapper.Dict as Dict exposing (Dict)
 import ListWrapper.Set as Set exposing (Set)
 
 type alias Model =
-    { pressedKey   : String
-    , score        : Dict Lane (List Notes)
+    { score        : Dict Lane (List Notes)
     , visibleNotes : Dict Lane (List Notes)
     , holdEvaluation : Dict Lane ( Evaluation, Notes )
     , startTime : Int
@@ -31,8 +30,7 @@ type alias Model =
 
 initialModel : Model
 initialModel =
-    { pressedKey   = ""
-    , score        = Debug.log "initialScore" initialScore
+    { score        = Debug.log "initialScore" initialScore
     , visibleNotes = initialScore
     , holdEvaluation = Dict.empty
     , startTime = 0        --[ms]
@@ -262,19 +260,14 @@ holdEndEvaluate lane model =
                 |> Maybe.andThen msToEvaluation
 
         visibleNotesUpdater value =
-            case value of
-                Nothing ->
-                    Nothing
+            case ( value, Dict.get lane model.holdEvaluation) of
+                ( Just list, Just ( _, hold ) )  ->
+                    list
+                        |> List.filter ((/=) hold)
+                        |> Just
 
-                Just list ->
-                    case Dict.get lane model.holdEvaluation of
-                        Nothing ->
-                            Just list
-
-                        Just ( _, hold ) ->
-                            list
-                                |> List.filter ((/=) hold)
-                                |> Just
+                ( old, _ ) ->
+                    old
     in
         { model |
           visibleNotes =
@@ -293,7 +286,7 @@ holdEndEvaluate lane model =
 setLaneState: Lane -> Bool -> Model -> Model
 setLaneState lane bool model =
     { model | isPressed = model.isPressed
-      |> if bool then Set.insert lane else Set.remove lane }
+        |> if bool then Set.insert lane else Set.remove lane }
 
 
 --View--
@@ -303,65 +296,29 @@ view model =
     let
         spentTimeInBeats = getSpentTimeInBeats model
 
-        drawNote : Lane -> Notes -> List (Svg Msg)
-        drawNote lane notes =
-            case notes of
-                Tap n ->
-                    drawTap lane (n - spentTimeInBeats)
-
-                Hold start end ->
-                    drawHold lane (start - spentTimeInBeats) (end - spentTimeInBeats)
-
         drawNotes =
             model.visibleNotes
                 |> Dict.toList
-                |> List.concatMap (\( lane, notes ) -> List.concatMap (drawNote lane) notes)
+                |> List.concatMap (\( lane, notes ) -> notes
+                    |> List.concatMap (drawNote spentTimeInBeats lane))
 
         changeLaneColor =
             model.isPressed
                 |> Set.toList
-                |> List.map
-                    (\lane ->
-                        rect
-                            [ x (lane |> lanePosition |> String.fromInt)
-                            , y "0"
-                            , width "50"
-                            , height (judgeLine |> String.fromInt)
-                            , fill "orange"
-                            ]
-                            []
-                    )
+                |> List.concatMap drawPressedLane
 
-        holdColorChangeHelper : Lane -> List (Svg Msg)
-        holdColorChangeHelper lane =
-            [ rect
-                [ x (lane |> lanePosition |> String.fromInt)
-                , y (judgeLine + 2 |> String.fromInt)
-                , width "50"
-                , height "35"
-                , fill "white"
-                ][]
-            ]
-
-        holdColorChanger =
+        rackOfHold =
             model.holdEvaluation
                 |> Dict.keys
-                |> List.concatMap holdColorChangeHelper
+                |> List.concatMap drawRackOfHold
 
         viewSvg =
-             svg[]
-                <| List.append changeLaneColor
-                <| List.append drawNotes
-                <| List.append holdColorChanger
-                    [ rect
-                        [ x "0"
-                        , y (judgeLine |> String.fromInt)
-                        , width "200"
-                        , height "2"
-                        , fill "black"
-                        ]
-                        []
-                    ]
+             svg[](List.concat
+                [ changeLaneColor
+                , drawNotes
+                , rackOfHold
+                , drawJudgeLine
+                ])
 
         viewGrades : Html Msg
         viewGrades  =
@@ -398,13 +355,9 @@ view model =
     in
         case model.phase of
             Play ->
-                div[]
-                    [ viewSvg, br[][]
-                    ]
+                div [][ viewSvg, br[][] ]
             Result ->
-                div[]
-                    [ viewGrades
-                    ]
+                div [][ viewGrades ]
 
 pixelPerBeatUnit = 1 -- [px / beatUnit]
 judgeLine = 120 -- [px]
@@ -423,52 +376,91 @@ laneColor lane =
         MiddleRight -> "Red"
         Right       -> "Blue"
 
-drawTap lane relativeBeats = -- レーン，判定線までの残り [beatUnit]
+drawNote : Int -> Lane -> Notes -> List (Svg Msg) -- 現在の拍[beat unit], レーン, ノーツ
+drawNote now lane note =
+    case note of
+        Tap at ->
+            [ rect
+                [ x <| String.fromInt <| lanePosition lane
+                , y <| String.fromInt (judgeLine - ((at - now) * pixelPerBeatUnit))
+                , width "50"
+                , height "5"
+                , fill <| laneColor lane
+                ]
+                []
+            ]
+
+        Hold start end ->
+            [ rect
+                [ x <| String.fromInt <| lanePosition lane
+                , y <| String.fromInt <| (judgeLine - ((start - now) * pixelPerBeatUnit))
+                , width "50"
+                , height "5"
+                , fill <| laneColor lane
+                ]
+                []
+                , rect
+                [ x <| String.fromInt <| lanePosition lane
+                , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
+                , width "50"
+                , height "5"
+                , fill <| laneColor lane
+                ]
+                []
+                , rect
+                [ x <| String.fromInt <| (lanePosition lane) + 5
+                , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
+                , width "40"
+                , height <| String.fromInt <| (end - start) * pixelPerBeatUnit
+                , fill <| laneColor lane
+                ]
+                []
+            ]
+
+drawRackOfHold : Lane -> List (Svg Msg)
+drawRackOfHold lane =
     [ rect
-        [ x <| String.fromInt <| lanePosition lane
-        , y <| String.fromInt (judgeLine - (relativeBeats * pixelPerBeatUnit))
+        [ x (lane |> lanePosition |> String.fromInt)
+        , y (judgeLine + 2 |> String.fromInt)
         , width "50"
-        , height "5"
-        , fill <| laneColor lane
+        , height "35"
+        , fill "white"
+        ][]
+    ]
+
+drawPressedLane : Lane -> List (Svg Msg)
+drawPressedLane lane =
+    [ rect
+        [ x (lane |> lanePosition |> String.fromInt)
+        , y "0"
+        , width "50"
+        , height (judgeLine |> String.fromInt)
+        , fill "orange"
         ]
         []
     ]
 
-drawHold lane start end =
+drawJudgeLine =
     [ rect
-        [ x <| String.fromInt <| lanePosition lane
-        , y <| String.fromInt <| (judgeLine - (start * pixelPerBeatUnit))
-        , width "50"
-        , height "5"
-        , fill <| laneColor lane
-        ]
-        []
-        , rect
-        [ x <| String.fromInt <| lanePosition lane
-        , y <| String.fromInt <| (judgeLine - (end * pixelPerBeatUnit))
-        , width "50"
-        , height "5"
-        , fill <| laneColor lane
-        ]
-        []
-        , rect
-        [ x <| String.fromInt <| (lanePosition lane) + 5
-        , y <| String.fromInt <| (judgeLine - (end * pixelPerBeatUnit))
-        , width "40"
-        , height <| String.fromInt <| (end - start) * pixelPerBeatUnit
-        , fill <| laneColor lane
+        [ x "0"
+        , y (judgeLine |> String.fromInt)
+        , width "200"
+        , height "2"
+        , fill "black"
         ]
         []
     ]
 
-stringToLane : String -> Maybe Lane
-stringToLane str =
-    case str of
-        "f" -> Just Left
-        "g" -> Just MiddleLeft
-        "h" -> Just MiddleRight
-        "j" -> Just Right
-        _   -> Nothing
+
+-- SUBSCRIPTIONS
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        [ onKeyDown keyDownDecoder
+        , onKeyUp keyUpDecoder
+        , Time.every 16 Tick
+        ]
 
 keyDownDecoder =
     (field "key" string)
@@ -480,13 +472,15 @@ keyUpDecoder =
         |> D.map stringToLane
         |> D.map (Maybe.map Released >> Maybe.withDefault None)
 
-subscription : Model -> Sub Msg
-subscription model =
-    Sub.batch
-        [ onKeyDown keyDownDecoder
-        , onKeyUp keyUpDecoder
-        , Time.every 16 Tick
-        ]
+stringToLane : String -> Maybe Lane
+stringToLane str =
+    case str of
+        "f" -> Just Left
+        "g" -> Just MiddleLeft
+        "h" -> Just MiddleRight
+        "j" -> Just Right
+        _   -> Nothing
+
 
 
 --Main--
@@ -497,5 +491,5 @@ main =
         { init = \_->(initialModel, perform Start Time.now )
         , view = view
         , update = update
-        , subscriptions = subscription
+        , subscriptions = subscriptions
         }
