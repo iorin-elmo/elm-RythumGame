@@ -19,6 +19,7 @@ type alias Model =
     { score        : Dict Lane (List Notes)
     , visibleNotes : Dict Lane (List Notes)
     , holdEvaluation : Dict Lane ( Evaluation, Notes )
+    , elements     : List Control
     , startTime : Int
     , spentTime : Int
     , bpm       : Int
@@ -30,7 +31,8 @@ type alias Model =
 
 initialModel : Model
 initialModel =
-    { score        = Debug.log "initialScore" initialScore
+    { score        = initialScore
+    , elements     = initialElements
     , visibleNotes = initialScore
     , holdEvaluation = Dict.empty
     , startTime = 0        --[ms]
@@ -52,6 +54,10 @@ type Lane
     | MiddleRight
     | Right
 
+type Control
+    = End Int             --[beatUnit]
+    | ChangeBPM Int Int   --[beat/min] [beatUnit]
+
 beatUnit = 120 -- [ / beat]
 
 initialScore =
@@ -61,6 +67,12 @@ initialScore =
         , ( MiddleRight, [ Tap 440, Tap 600, Tap 720 ] )
         , ( Right, [ Tap 480, Tap 640, Tap 680, Tap 800 ] )
         ]
+
+initialElements =
+    (End 920)::
+    [ ChangeBPM 120 0
+    , ChangeBPM 60 240
+    ]
 
 type Msg
     = Pressed Lane
@@ -123,20 +135,27 @@ update msg model =
 changePhase : Model -> Model
 changePhase model =
     let
-        allNotesNumber =
-            model.score
-                |> Dict.values
-                |> List.map List.length
-                |> List.sum
+        spentTimeInBeats = getSpentTimeInBeats model
+        chooseEndElement control =
+            case control of
+                End _ -> True
+                _ -> False
 
-        evaluatedNotes =
-            model.grades
-                |> List.length
+        endTime =
+            model.elements
+                |> List.filter chooseEndElement
+                |> List.head
+
+        newPhase =
+            case endTime of
+                Just (End endBeatUnit) ->
+                    if endBeatUnit < spentTimeInBeats
+                        then Result
+                        else Play
+                _ -> Play
 
     in
-        if allNotesNumber /= evaluatedNotes
-        then { model | phase = Play }
-        else { model | phase = Result }
+        { model | phase = newPhase }
 
 getSpentTimeInBeats model = model.spentTime * model.bpm // 60 * beatUnit // 1000
 
