@@ -19,10 +19,10 @@ type alias Model =
     { score        : Dict Lane (List Notes)
     , visibleNotes : Dict Lane (List Notes)
     , holdEvaluation : Dict Lane ( Evaluation, Notes )
-    , elements     : List Control
-    , startTime : Int
-    , spentTime : Int
+    , elements     : List ( Int, Control )
+    , spentTimeFromReferencePoint : Int
     , bpm       : Int
+    , beatReferencePoint : ( Int, Int )
     , isPressed : Set Lane
     , speed : Int
     , grades : List Evaluation
@@ -35,9 +35,9 @@ initialModel =
     , elements     = initialElements
     , visibleNotes = initialScore
     , holdEvaluation = Dict.empty
-    , startTime = 0        --[ms]
-    , spentTime = 0        --[ms]
+    , spentTimeFromReferencePoint = 0        --[ms]
     , bpm       = 120      --[beats/min]
+    , beatReferencePoint = ( 0, 0 )  --( [ms], [beatUnit] )
     , isPressed = Set.empty
     , speed = 0
     , grades = []
@@ -55,8 +55,8 @@ type Lane
     | Right
 
 type Control
-    = End Int             --timing[beatUnit]
-    | ChangeBPM Int Int   --timing[beatUnit] newBPM[beat/min]
+    = End
+    | ChangeBPM Int  -- newBPM[beat/min]
 
 beatUnit = 120 -- [ / beat]
 
@@ -69,9 +69,9 @@ initialScore =
         ]
 
 initialElements =
-    [ ChangeBPM 120 60
-    , ChangeBPM 480 120
-    , End 920
+    [ ( 120, ChangeBPM 60 )
+    , ( 480, ChangeBPM 120 )
+    , ( 920, End )
     ]
 
 type Msg
@@ -114,17 +114,18 @@ update msg model =
 
         Tick posix ->
             let
-                newModel = { model | spentTime = (posixToMillis posix) - model.startTime }
+                ( referenceTime, _ ) = model.beatReferencePoint
+                newModel = { model | spentTimeFromReferencePoint = (posixToMillis posix) - referenceTime }
+                debug = Debug.log "spenttime" model.spentTimeFromReferencePoint
             in
                 ( newModel
                     |> removeExpiredVisibleNotes
-                    |> changePhase
-                    |> changeBPM
+                    |> checkControls
                 , Cmd.none
                 )
 
         Start posix ->
-            ( { model | startTime = posixToMillis posix }
+            ( { model | beatReferencePoint = ( posixToMillis posix, 0 ) }
             , Cmd.none
             )
 
@@ -133,50 +134,37 @@ update msg model =
             , Cmd.none
             )
 
-changePhase : Model -> Model
-changePhase model =
+checkControls : Model -> Model
+checkControls model =
     let
         spentTimeInBeats = getSpentTimeInBeats model
-        chooseEndElement control =
-            case control of
-                End _ -> True
-                _ -> False
-
-        endTime =
-            model.elements
-                |> List.filter chooseEndElement
-                |> List.head
-
-        newPhase =
-            case endTime of
-                Just (End endBeatUnit) ->
-                    if endBeatUnit < spentTimeInBeats
-                        then Result
-                        else Play
-                _ -> Play
-
     in
-        { model | phase = newPhase }
+        case model.elements of
+            [] ->
+                model
 
-changeBPM : Model -> Model
-changeBPM model =
-    let
-        spentTimeInBeats = getSpentTimeInBeats model
-        ( newBPM, newElements ) =
-            case model.elements |> List.head of
-                Just (ChangeBPM time bpm) ->
-                    if spentTimeInBeats >= time
-                        then
-                            ( bpm
-                            , model.elements
-                                |> List.drop 1
-                            )
-                        else ( model.bpm, model.elements )
-                _ -> ( model.bpm, model.elements )
-    in
-        { model | bpm = newBPM, elements = newElements |> Debug.log "elements" }
+            ( timing, control ) :: tl ->
+                if spentTimeInBeats < timing
+                then model
+                else applyControl { model | elements = tl } control
+                    |> checkControls
 
-getSpentTimeInBeats model = model.spentTime * model.bpm // 60 * beatUnit // 1000
+applyControl model ctrl =
+    case ctrl of
+        End -> { model | phase = Result }
+        ChangeBPM newBPM ->
+            let
+                ( old, _ ) = model.beatReferencePoint
+                newReferencePoint =
+                    ( old + model.spentTimeFromReferencePoint, getSpentTimeInBeats model )
+            in
+                { model
+                    | bpm = newBPM
+                    , beatReferencePoint = newReferencePoint
+                    , spentTimeFromReferencePoint = 0
+                }
+
+getSpentTimeInBeats model = model.spentTimeFromReferencePoint * model.bpm // 60 * beatUnit // 1000 + (Tuple.second model.beatReferencePoint)
 
 removeExpiredVisibleNotes : Model -> Model
 removeExpiredVisibleNotes model =
@@ -213,7 +201,7 @@ evaluate : Lane -> Model -> Model
 evaluate lane model =
     let
         beatUnitToMillis beatUnits = beatUnits * 1000 * 60 // model.bpm // beatUnit
-        timeError beatUnits = abs (beatUnitToMillis beatUnits - model.spentTime)
+        timeError beatUnits = abs (beatUnitToMillis beatUnits - model.spentTimeFromReferencePoint)
 
         msToEvaluation : Int -> Notes -> Maybe Evaluation
         msToEvaluation pressedTime notes =
@@ -257,7 +245,7 @@ evaluate lane model =
 
         holdForEvaluating =
             decideNoteForEvaluating
-                |> Maybe.andThen (\hold -> msToEvaluation model.spentTime hold
+                |> Maybe.andThen (\hold -> msToEvaluation model.spentTimeFromReferencePoint hold
                     |> Maybe.map (\grade -> ( grade, hold )))
 
     in
@@ -277,7 +265,7 @@ holdEndEvaluate : Lane -> Model -> Model
 holdEndEvaluate lane model =
     let
         beatUnitToMillis beatUnits = beatUnits * 1000 * 60 // model.bpm // beatUnit
-        timeError beatUnits = abs (beatUnitToMillis beatUnits - model.spentTime)
+        timeError beatUnits = abs (beatUnitToMillis beatUnits - model.spentTimeFromReferencePoint)
 
         msToEvaluation : ( Evaluation, Notes ) -> Maybe Evaluation
         msToEvaluation holdNotes =
@@ -493,11 +481,14 @@ drawJudgeLine =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.batch
-        [ onKeyDown keyDownDecoder
-        , onKeyUp keyUpDecoder
-        , Time.every 16 Tick
-        ]
+    case model.phase of
+        Play ->
+            Sub.batch
+                [ onKeyDown keyDownDecoder
+                , onKeyUp keyUpDecoder
+                , Time.every 16 Tick
+                ]
+        Result -> Sub.none
 
 keyDownDecoder =
     (field "key" string)
