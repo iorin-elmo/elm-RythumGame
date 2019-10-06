@@ -7,11 +7,26 @@
   <link rel="stylesheet" type="text/css" href="elm.css">
 </head>
 <body>
-  <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="svg-symbol">
+  <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="svg-symbol" aria-hidden="true" focusable="false">
     <defs>
-      <symbol id="tap">
-        <rect x="0" y="0" width="50" height="5" />
-      </symbol>
+      <radialGradient  id="radical-red">
+        <stop offset="0.4" stop-color="red" />
+        <stop offset="1" stop-color="black" />
+      </radialGradient >
+
+      <radialGradient  id="radical-blue">
+        <stop offset="0.4" stop-color="blue" />
+        <stop offset="1" stop-color="black" />
+      </radialGradient >
+
+      <linearGradient id="lane-light" x1="0" y1="1" x2="0" y2="0">
+        <stop offset="0" stop-color="orange" />
+        <stop offset="1" stop-color="white" />
+      </linearGradient>
+
+      <g id="tap-red">
+        <rect width="50" height="5" />
+      </g>
     </defs>
   </svg>
   <main/>

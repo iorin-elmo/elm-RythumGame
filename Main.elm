@@ -390,17 +390,17 @@ lanePosition lane = -- [px]
 
 laneColor lane =
     case lane of
-        Left        -> "Blue"
-        MiddleLeft  -> "Red"
-        MiddleRight -> "Red"
-        Right       -> "Blue"
+        Left        -> "url(#radical-blue)"
+        MiddleLeft  -> "url(#radical-red)"
+        MiddleRight -> "url(#radical-red)"
+        Right       -> "url(#radical-blue)"
 
 drawNote : Int -> Lane -> Notes -> List (Svg Msg) -- 現在の拍[beat unit], レーン, ノーツ
 drawNote now lane note =
     case note of
         Tap at ->
             [ use
-                [ xlinkHref "#tap"
+                [ xlinkHref "#tap-red"
                 , x <| String.fromInt <| lanePosition lane
                 , y <| String.fromInt (judgeLine - ((at - now) * pixelPerBeatUnit))
                 , fill <| laneColor lane
@@ -410,6 +410,14 @@ drawNote now lane note =
 
         Hold start end ->
             [ rect
+                [ x <| String.fromInt <| (lanePosition lane) + 5
+                , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
+                , width "40"
+                , height <| String.fromInt <| (end - start) * pixelPerBeatUnit
+                , fill <| laneColor lane
+                ]
+                []
+            , rect
                 [ x <| String.fromInt <| lanePosition lane
                 , y <| String.fromInt <| (judgeLine - ((start - now) * pixelPerBeatUnit))
                 , width "50"
@@ -417,19 +425,11 @@ drawNote now lane note =
                 , fill <| laneColor lane
                 ]
                 []
-                , rect
+            , rect
                 [ x <| String.fromInt <| lanePosition lane
                 , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
                 , width "50"
                 , height "5"
-                , fill <| laneColor lane
-                ]
-                []
-                , rect
-                [ x <| String.fromInt <| (lanePosition lane) + 5
-                , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
-                , width "40"
-                , height <| String.fromInt <| (end - start) * pixelPerBeatUnit
                 , fill <| laneColor lane
                 ]
                 []
@@ -453,7 +453,7 @@ drawPressedLane lane =
         , y "0"
         , width "50"
         , height (judgeLine |> String.fromInt)
-        , fill "orange"
+        , fill "url(#lane-light)"
         ]
         []
     ]
