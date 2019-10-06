@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (..)
 
 import Browser
 import Browser.Events exposing (onKeyDown, onKeyUp)
@@ -14,6 +14,8 @@ import Task exposing (perform)
 
 import ListWrapper.Dict as Dict exposing (Dict)
 import ListWrapper.Set as Set exposing (Set)
+
+port sound : String -> Cmd msg
 
 type alias Model =
     { score        : Dict Lane (List Notes)
@@ -41,7 +43,7 @@ initialModel =
     , isPressed = Set.empty
     , speed = 0
     , grades = []
-    , phase = Play
+    , phase = Title
     }
 
 type Notes
@@ -89,7 +91,8 @@ type Evaluation
     | Miss                    --  0%
 
 type Phase
-    = Play
+    = Title
+    | Play
     | Result
 
 
@@ -99,11 +102,17 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         Pressed lane ->
-            ( model
-                |> setLaneState lane True
-                |> evaluate lane
-            , Cmd.none
-            )
+            let
+                newMsg =
+                    case model.phase of
+                        Title -> perform Start Time.now
+                        _ -> Cmd.none
+            in
+                ( { model | phase = Play }
+                    |> setLaneState lane True
+                    |> evaluate lane
+                , newMsg
+                )
 
         Released lane ->
             ( model
@@ -116,7 +125,7 @@ update msg model =
             let
                 ( referenceTime, _ ) = model.beatReferencePoint
                 newModel = { model | spentTimeFromReferencePoint = (posixToMillis posix) - referenceTime }
-                debug = Debug.log "spenttime" model.spentTimeFromReferencePoint
+
             in
                 ( newModel
                     |> removeExpiredVisibleNotes
@@ -126,7 +135,7 @@ update msg model =
 
         Start posix ->
             ( { model | beatReferencePoint = ( posixToMillis posix, 0 ) }
-            , Cmd.none
+            , sound "ddddddddd"
             )
 
         None ->
@@ -201,7 +210,7 @@ evaluate : Lane -> Model -> Model
 evaluate lane model =
     let
         beatUnitToMillis beatUnits = beatUnits * 1000 * 60 // model.bpm // beatUnit
-        timeError beatUnits = abs (beatUnitToMillis beatUnits - model.spentTimeFromReferencePoint)
+        timeError beatUnits = abs (beatUnitToMillis (beatUnits - getSpentTimeInBeats model) )
 
         msToEvaluation : Int -> Notes -> Maybe Evaluation
         msToEvaluation pressedTime notes =
@@ -265,7 +274,7 @@ holdEndEvaluate : Lane -> Model -> Model
 holdEndEvaluate lane model =
     let
         beatUnitToMillis beatUnits = beatUnits * 1000 * 60 // model.bpm // beatUnit
-        timeError beatUnits = abs (beatUnitToMillis beatUnits - model.spentTimeFromReferencePoint)
+        timeError beatUnits = abs (beatUnitToMillis (beatUnits - getSpentTimeInBeats model) )
 
         msToEvaluation : ( Evaluation, Notes ) -> Maybe Evaluation
         msToEvaluation holdNotes =
@@ -326,7 +335,7 @@ view model =
             model.visibleNotes
                 |> Dict.toList
                 |> List.concatMap (\( lane, notes ) -> notes
-                    |> List.concatMap (drawNote spentTimeInBeats lane))
+                    |> List.concatMap (drawNote spentTimeInBeats lane model.holdEvaluation))
 
         changeLaneColor =
             model.isPressed
@@ -376,11 +385,17 @@ view model =
                         [CriticalPerfect, Perfect, Great, Good, Miss]
                             |> List.concatMap viewEvaluation
                     )
+        viewTitle =
+            div[]
+                [ text "Press any key to start"
+                ]
 
     in
         case model.phase of
+            Title ->
+                div [][ viewTitle ]
             Play ->
-                div [][ viewSvg, br[][] ]
+                div [][ viewSvg ]
             Result ->
                 div [][ viewGrades ]
 
@@ -401,8 +416,8 @@ laneColor lane =
         MiddleRight -> "Red"
         Right       -> "Blue"
 
-drawNote : Int -> Lane -> Notes -> List (Svg Msg) -- 現在の拍[beat unit], レーン, ノーツ
-drawNote now lane note =
+drawNote : Int -> Lane ->  Dict Lane ( Evaluation, Notes ) -> Notes -> List (Svg Msg) -- 現在の拍[beat unit], レーン, ノーツ
+drawNote now lane holdEvaluation note =
     case note of
         Tap at ->
             [ rect
@@ -416,31 +431,42 @@ drawNote now lane note =
             ]
 
         Hold start end ->
-            [ rect
-                [ x <| String.fromInt <| lanePosition lane
-                , y <| String.fromInt <| (judgeLine - ((start - now) * pixelPerBeatUnit))
-                , width "50"
-                , height "5"
-                , fill <| laneColor lane
-                ]
-                []
+            let
+                ( lengthOfHold, widthOfHoldStart ) =
+                    case holdEvaluation |> Dict.get lane of
+                        Nothing ->
+                             ( (end - start) * pixelPerBeatUnit, 5 )
+                        Just ( _, holdingNotes ) ->
+                            if holdingNotes == note
+                            then ( (end - now) * pixelPerBeatUnit, 0 )
+                            else ( (end - start) * pixelPerBeatUnit, 5 )
+
+            in
+                [ rect
+                    [ x <| String.fromInt <| (lanePosition lane) + (5 - widthOfHoldStart)
+                    , y <| String.fromInt <| (judgeLine - ((start - now) * pixelPerBeatUnit))
+                    , width <| String.fromInt <| widthOfHoldStart*2 +40
+                    , height "5"
+                    , fill <| laneColor lane
+                    ]
+                    []
                 , rect
-                [ x <| String.fromInt <| lanePosition lane
-                , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
-                , width "50"
-                , height "5"
-                , fill <| laneColor lane
-                ]
-                []
+                    [ x <| String.fromInt <| lanePosition lane
+                    , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
+                    , width "50"
+                    , height "5"
+                    , fill <| laneColor lane
+                    ]
+                    []
                 , rect
-                [ x <| String.fromInt <| (lanePosition lane) + 5
-                , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
-                , width "40"
-                , height <| String.fromInt <| (end - start) * pixelPerBeatUnit
-                , fill <| laneColor lane
+                    [ x <| String.fromInt <| (lanePosition lane) + 5
+                    , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
+                    , width "40"
+                    , height <| String.fromInt <| lengthOfHold
+                    , fill <| laneColor lane
+                    ]
+                    []
                 ]
-                []
-            ]
 
 drawRackOfHold : Lane -> List (Svg Msg)
 drawRackOfHold lane =
@@ -482,6 +508,8 @@ drawJudgeLine =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     case model.phase of
+        Title ->
+            onKeyDown keyDownDecoder
         Play ->
             Sub.batch
                 [ onKeyDown keyDownDecoder
@@ -516,7 +544,7 @@ stringToLane str =
 main : Program () Model Msg
 main =
     Browser.element
-        { init = \_->(initialModel, perform Start Time.now )
+        { init = \_-> (initialModel, Cmd.none )
         , view = view
         , update = update
         , subscriptions = subscriptions
