@@ -4,9 +4,9 @@ import Browser
 import Browser.Events exposing (onKeyDown, onKeyUp)
 import Json.Decode as D exposing (Decoder, field, string)
 
-import Html exposing (Html, div, text, br)
-import Html.Attributes exposing (id, class)
-import Html.Events exposing (onClick)
+import Html exposing (Html, div, text, br, input)
+import Html.Attributes exposing (id, class, type_, min, max, step, value)
+import Html.Events exposing (onClick, onInput, targetValue)
 import Svg exposing (Svg, svg, rect)
 import Svg.Attributes exposing (width, height, viewBox, x, y, fill)
 import Time exposing (Posix, every, posixToMillis)
@@ -26,9 +26,11 @@ type alias Model =
     , bpm       : Int
     , beatReferencePoint : ( Int, Int )
     , isPressed : Set Lane
-    , speed : Int
+    , speed : Float
     , grades : List Evaluation
     , phase : Phase
+    , volume : Float
+    , viewTestText : String
     }
 
 initialModel : Model
@@ -41,9 +43,11 @@ initialModel =
     , bpm       = 120      --[beats/min]
     , beatReferencePoint = ( 0, 0 )  --( [ms], [beatUnit] )
     , isPressed = Set.empty
-    , speed = 0
+    , speed = 1
     , grades = []
     , phase = Title
+    , volume = 1
+    , viewTestText = ""
     }
 
 type Notes
@@ -82,6 +86,17 @@ type Msg
     | Tick Posix
     | Start Posix
     | None
+    | KeyDownTest Option
+    | SliderChanged Setting Float
+
+type Setting
+    = Volume
+    | Speed
+
+type Option
+    = MoveToSettings
+    | Escape
+    | Else String
 
 type Evaluation
     = CriticalPerfect         --100%(+1)
@@ -92,6 +107,7 @@ type Evaluation
 
 type Phase
     = Title
+    | Settings
     | Play
     | Result
 
@@ -101,6 +117,45 @@ type Phase
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        SliderChanged set value ->
+            let
+                newModel =
+                    case set of
+                        Volume -> { model | volume = value }
+                        Speed  -> { model | speed  = value }
+            in
+                ( newModel, Cmd.none )
+
+        KeyDownTest opt ->
+            case opt of
+                MoveToSettings ->
+                    ( { model | phase = Settings }, Cmd.none )
+                Escape ->
+                    case model.phase of
+                        Title ->
+                            ( model, Cmd.none )
+                        Settings ->
+                            ( { model | phase = Title }, Cmd.none )
+                        Play ->
+                            ( model, Cmd.none )
+                        Result ->
+                            let
+                                newModel =
+                                    { model |
+                                      visibleNotes = initialScore
+                                    , holdEvaluation = Dict.empty
+                                    , spentTimeFromReferencePoint = 0
+                                    , bpm       = 120
+                                    , beatReferencePoint = ( 0, 0 )
+                                    , isPressed = Set.empty
+                                    , grades = []
+                                    , phase = Title
+                                    }
+                            in
+                                ( newModel, Cmd.none )
+                Else str ->
+                    ( { model | viewTestText = str }, Cmd.none )
+
         Pressed lane ->
             let
                 newMsg =
@@ -335,23 +390,17 @@ view model =
             model.visibleNotes
                 |> Dict.toList
                 |> List.concatMap (\( lane, notes ) -> notes
-                    |> List.concatMap (drawNote spentTimeInBeats lane model.holdEvaluation))
+                    |> List.concatMap (drawNote model spentTimeInBeats lane model.holdEvaluation))
 
         changeLaneColor =
             model.isPressed
                 |> Set.toList
                 |> List.concatMap drawPressedLane
 
-        rackOfHold =
-            model.holdEvaluation
-                |> Dict.keys
-                |> List.concatMap drawRackOfHold
-
         viewSvg =
              svg[](List.concat
                 [ changeLaneColor
                 , drawNotes
-                , rackOfHold
                 , drawJudgeLine
                 ])
 
@@ -387,19 +436,54 @@ view model =
                     )
         viewTitle =
             div[]
-                [ text "Press any key to start"
+                [ text "Press any key to start (Press 's' to open settings)"
                 ]
+
+        viewSettings =
+            let
+                speedString =
+                    String.append (String.fromInt <| (//) 10 <| round <| model.speed * 10)
+                        <| String.append "."
+                        (String.fromInt <| modBy 10 <| round <| model.speed * 10)
+            in
+                div[]
+                    [ text "Volume"
+                    , input
+                        [ type_ "range"
+                        , min "0"
+                        , max "1"
+                        , step "0.01"
+                        , value <| String.fromFloat <| model.volume
+                        , onInput (String.toFloat >> Maybe.withDefault model.volume >> SliderChanged Volume)
+                        ][]
+                    , text <| String.fromInt <| round <| model.volume * 100
+                    , br[][]
+                    , text "Speed  "
+                    , input
+                        [ type_ "range"
+                        , min "1"
+                        , max "2"
+                        , step "0.1"
+                        , value <| String.fromFloat <| model.speed
+                        , onInput (String.toFloat >> Maybe.withDefault model.speed >> SliderChanged Speed)
+                        ][]
+                    , text speedString
+                    , br[][]
+                    , text model.viewTestText
+                    ]
 
     in
         case model.phase of
             Title ->
                 div [][ viewTitle ]
+            Settings ->
+                div [][ viewSettings ]
             Play ->
                 div [][ viewSvg ]
             Result ->
                 div [][ viewGrades ]
 
-pixelPerBeatUnit = 1 -- [px / beatUnit]
+pixelPerBeatUnit model = model.speed -- [px / beatUnit]
 judgeLine = 120 -- [px]
 
 lanePosition lane = -- [px]
@@ -416,13 +500,13 @@ laneColor lane =
         MiddleRight -> "Red"
         Right       -> "Blue"
 
-drawNote : Int -> Lane ->  Dict Lane ( Evaluation, Notes ) -> Notes -> List (Svg Msg) -- 現在の拍[beat unit], レーン, ノーツ
-drawNote now lane holdEvaluation note =
+drawNote : Model -> Int -> Lane ->  Dict Lane ( Evaluation, Notes ) -> Notes -> List (Svg Msg) -- 現在の拍[beat unit], レーン, ノーツ
+drawNote model now lane holdEvaluation note =
     case note of
         Tap at ->
             [ rect
                 [ x <| String.fromInt <| lanePosition lane
-                , y <| String.fromInt (judgeLine - ((at - now) * pixelPerBeatUnit))
+                , y <| String.fromFloat <| (toFloat (judgeLine - (at - now))) * (pixelPerBeatUnit model)
                 , width "50"
                 , height "5"
                 , fill <| laneColor lane
@@ -432,52 +516,49 @@ drawNote now lane holdEvaluation note =
 
         Hold start end ->
             let
-                ( lengthOfHold, widthOfHoldStart ) =
+                ( lengthOfHold, isDrawHoldStart ) =
                     case holdEvaluation |> Dict.get lane of
                         Nothing ->
-                             ( (end - start) * pixelPerBeatUnit, 5 )
+                             ((toFloat (end - start)) * (pixelPerBeatUnit model), True )
                         Just ( _, holdingNotes ) ->
                             if holdingNotes == note
-                            then ( (end - now) * pixelPerBeatUnit, 0 )
-                            else ( (end - start) * pixelPerBeatUnit, 5 )
+                            then ((toFloat (end - now)) * (pixelPerBeatUnit model), False )
+                            else ((toFloat (end - start)) * (pixelPerBeatUnit model), True )
+                drawHoldStart =
+                    if isDrawHoldStart
+                    then
+                        [ rect
+                            [ x <| String.fromInt <| lanePosition lane
+                            , y <| String.fromFloat <| (toFloat (judgeLine - (start - now))) * (pixelPerBeatUnit model)
+                            , width "50"
+                            , height "5"
+                            , fill <| laneColor lane
+                            ]
+                            []
+                        ]
+                    else
+                        []
+
 
             in
-                [ rect
-                    [ x <| String.fromInt <| (lanePosition lane) + (5 - widthOfHoldStart)
-                    , y <| String.fromInt <| (judgeLine - ((start - now) * pixelPerBeatUnit))
-                    , width <| String.fromInt <| widthOfHoldStart*2 +40
-                    , height "5"
-                    , fill <| laneColor lane
+                List.append drawHoldStart
+                    [ rect
+                        [ x <| String.fromInt <| lanePosition lane
+                        , y <| String.fromFloat <| (toFloat (judgeLine - (end - now))) * (pixelPerBeatUnit model)
+                        , width "50"
+                        , height "5"
+                        , fill <| laneColor lane
+                        ]
+                        []
+                    , rect
+                        [ x <| String.fromInt <| (lanePosition lane) + 5
+                        ,y <| String.fromFloat <| (toFloat (judgeLine - (end - now))) * (pixelPerBeatUnit model)
+                        , width "40"
+                        , height <| String.fromInt <| round <| lengthOfHold
+                        , fill <| laneColor lane
+                        ]
+                        []
                     ]
-                    []
-                , rect
-                    [ x <| String.fromInt <| lanePosition lane
-                    , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
-                    , width "50"
-                    , height "5"
-                    , fill <| laneColor lane
-                    ]
-                    []
-                , rect
-                    [ x <| String.fromInt <| (lanePosition lane) + 5
-                    , y <| String.fromInt <| (judgeLine - ((end - now) * pixelPerBeatUnit))
-                    , width "40"
-                    , height <| String.fromInt <| lengthOfHold
-                    , fill <| laneColor lane
-                    ]
-                    []
-                ]
-
-drawRackOfHold : Lane -> List (Svg Msg)
-drawRackOfHold lane =
-    [ rect
-        [ x (lane |> lanePosition |> String.fromInt)
-        , y (judgeLine + 2 |> String.fromInt)
-        , width "50"
-        , height "35"
-        , fill "white"
-        ][]
-    ]
 
 drawPressedLane : Lane -> List (Svg Msg)
 drawPressedLane lane =
@@ -509,7 +590,9 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     case model.phase of
         Title ->
-            onKeyDown keyDownDecoder
+            onKeyDown keyDownTester
+        Settings ->
+            onKeyDown keyDownTester
         Play ->
             Sub.batch
                 [ onKeyDown keyDownDecoder
@@ -517,6 +600,17 @@ subscriptions model =
                 , Time.every 16 Tick
                 ]
         Result -> Sub.none
+
+keyDownTester =
+    (field "key" string)
+        |> D.map stringToOptions
+        |> D.map KeyDownTest
+
+stringToOptions str =
+    case str of
+        "s" -> MoveToSettings
+        "Escape" -> Escape
+        _   -> Else str
 
 keyDownDecoder =
     (field "key" string)
