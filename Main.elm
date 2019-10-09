@@ -16,6 +16,8 @@ import ListWrapper.Dict as Dict exposing (Dict)
 import ListWrapper.Set as Set exposing (Set)
 
 port sound : String -> Cmd msg
+port pause : String -> Cmd msg
+port volumeChange : Float -> Cmd msg
 
 type alias Model =
     { score        : Dict Lane (List Notes)
@@ -129,15 +131,19 @@ update msg model =
         KeyDownTest opt ->
             case opt of
                 MoveToSettings ->
-                    ( { model | phase = Settings }, Cmd.none )
+                    case model.phase of
+                        Title ->
+                            ( { model | phase = Settings }, Cmd.none )
+                        _ ->
+                            ( model, Cmd.none )
                 Escape ->
                     case model.phase of
                         Title ->
                             ( model, Cmd.none )
                         Settings ->
-                            ( { model | phase = Title }, Cmd.none )
+                            ( { model | phase = Title }, volumeChange model.volume )
                         Play ->
-                            ( model, Cmd.none )
+                            ( model, pause "id" )
                         Result ->
                             let
                                 newModel =
@@ -154,7 +160,11 @@ update msg model =
                             in
                                 ( newModel, Cmd.none )
                 Else str ->
-                    ( { model | viewTestText = str }, Cmd.none )
+                    case model.phase of
+                        Title ->
+                            ( { model | phase = Play }, perform Start Time.now)
+                        _ ->
+                            ( { model | viewTestText = str }, Cmd.none )
 
         Pressed lane ->
             let
@@ -190,7 +200,7 @@ update msg model =
 
         Start posix ->
             ( { model | beatReferencePoint = ( posixToMillis posix, 0 ) }
-            , sound "ddddddddd"
+            , sound "id"
             )
 
         None ->
@@ -599,7 +609,8 @@ subscriptions model =
                 , onKeyUp keyUpDecoder
                 , Time.every 16 Tick
                 ]
-        Result -> Sub.none
+        Result ->
+            onKeyDown keyDownTester
 
 keyDownTester =
     (field "key" string)

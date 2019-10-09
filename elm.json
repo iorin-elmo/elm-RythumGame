@@ -7,7 +7,6 @@
     "dependencies": {
         "direct": {
             "YuyaAizawa/list-wrapper": "1.0.1",
-            "bemyak/elm-slider": "1.0.0",
             "elm/browser": "1.0.1",
             "elm/core": "1.0.2",
             "elm/html": "1.0.0",

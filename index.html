@@ -18,6 +18,14 @@
     app.ports.sound.subscribe(function(id) {
       audio.play();
     });
+    app.ports.volumeChange.subscribe(function(volume) {
+      audio.volume = volume;
+    });
+    app.ports.pause.subscribe(function(id) {
+      document.write(id);
+      audio.pause();
+    });
+
   </script>
 </body>
 </html>
