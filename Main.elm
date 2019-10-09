@@ -33,6 +33,7 @@ type alias Model =
     , phase : Phase
     , volume : Float
     , viewTestText : String
+    , isPause : Bool
     }
 
 initialModel : Model
@@ -50,6 +51,7 @@ initialModel =
     , phase = Title
     , volume = 1
     , viewTestText = ""
+    , isPause = False
     }
 
 type Notes
@@ -97,6 +99,7 @@ type Setting
 
 type Option
     = MoveToSettings
+    | Resume
     | Escape
     | Else String
 
@@ -110,7 +113,7 @@ type Evaluation
 type Phase
     = Title
     | Settings
-    | Play
+    | Play Bool
     | Result
 
 
@@ -142,8 +145,12 @@ update msg model =
                             ( model, Cmd.none )
                         Settings ->
                             ( { model | phase = Title }, volumeChange model.volume )
-                        Play ->
-                            ( model, pause "id" )
+                        Play bool->
+                            let
+                                cmd =
+                                    if bool then sound "id" else pause "id"
+                            in
+                                ( { model | isPause = not model.isPause }, cmd )
                         Result ->
                             let
                                 newModel =
@@ -159,10 +166,12 @@ update msg model =
                                     }
                             in
                                 ( newModel, Cmd.none )
+                Resume ->
+                    ( model, Cmd.none )
                 Else str ->
                     case model.phase of
                         Title ->
-                            ( { model | phase = Play }, perform Start Time.now)
+                            ( { model | phase = Play False}, perform Start Time.now)
                         _ ->
                             ( { model | viewTestText = str }, Cmd.none )
 
@@ -173,7 +182,7 @@ update msg model =
                         Title -> perform Start Time.now
                         _ -> Cmd.none
             in
-                ( { model | phase = Play }
+                ( { model | phase = Play False}
                     |> setLaneState lane True
                     |> evaluate lane
                 , newMsg
@@ -488,7 +497,7 @@ view model =
                 div [][ viewTitle ]
             Settings ->
                 div [][ viewSettings ]
-            Play ->
+            Play _->
                 div [][ viewSvg ]
             Result ->
                 div [][ viewGrades ]
@@ -603,12 +612,17 @@ subscriptions model =
             onKeyDown keyDownTester
         Settings ->
             onKeyDown keyDownTester
-        Play ->
-            Sub.batch
-                [ onKeyDown keyDownDecoder
-                , onKeyUp keyUpDecoder
-                , Time.every 16 Tick
-                ]
+        Play bool ->
+            if bool
+            then
+                onKeyDown keyDownDecoder
+            else
+                Sub.batch
+                    [ onKeyDown keyDownDecoder
+                    , onKeyDown keyDownTester
+                    , onKeyUp keyUpDecoder
+                    , Time.every 16 Tick
+                    ]
         Result ->
             onKeyDown keyDownTester
 
@@ -620,6 +634,7 @@ keyDownTester =
 stringToOptions str =
     case str of
         "s" -> MoveToSettings
+        "r" -> Resume
         "Escape" -> Escape
         _   -> Else str
 
