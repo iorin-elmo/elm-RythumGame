@@ -147,10 +147,14 @@ update msg model =
                             ( { model | phase = Title }, volumeChange model.volume )
                         Play bool->
                             let
-                                cmd =
+                                newModel =
+                                    if bool
+                                    then model
+                                    else { model | isPause = True }
+                                newCmd =
                                     if bool then sound "id" else pause "id"
                             in
-                                ( { model | isPause = not model.isPause }, cmd )
+                                ( newModel, newCmd )
                         Result ->
                             let
                                 newModel =
@@ -167,11 +171,15 @@ update msg model =
                             in
                                 ( newModel, Cmd.none )
                 Resume ->
-                    ( model, Cmd.none )
+                    case model.phase of
+                        Play True ->
+                            ( { model | phase = Play False, isPause = False }, Cmd.none )
+                        _ ->
+                            ( model, Cmd.none )
                 Else str ->
                     case model.phase of
                         Title ->
-                            ( { model | phase = Play False}, perform Start Time.now)
+                            ( { model | phase = Play False }, perform Start Time.now)
                         _ ->
                             ( { model | viewTestText = str }, Cmd.none )
 
@@ -571,7 +579,7 @@ drawNote model now lane holdEvaluation note =
                         []
                     , rect
                         [ x <| String.fromInt <| (lanePosition lane) + 5
-                        ,y <| String.fromFloat <| (toFloat (judgeLine - (end - now))) * (pixelPerBeatUnit model)
+                        , y <| String.fromFloat <| (toFloat (judgeLine - (end - now))) * (pixelPerBeatUnit model)
                         , width "40"
                         , height <| String.fromInt <| round <| lengthOfHold
                         , fill <| laneColor lane
@@ -615,7 +623,7 @@ subscriptions model =
         Play bool ->
             if bool
             then
-                onKeyDown keyDownDecoder
+                onKeyDown keyDownTester
             else
                 Sub.batch
                     [ onKeyDown keyDownDecoder
