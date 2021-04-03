@@ -34,6 +34,16 @@
   <script src="js/Elm.js"></script>
   <script>
     const app = Elm.Main.init({ node: document.querySelector('main') })
+
+    const audio = new Audio();
+    app.ports.playMusic.subscribe(function(file) {
+      audio.src = file;
+      audio.play();
+    });
+    app.ports.stopMusic.subscribe(function() {
+      audio.pause();
+      audio.currentTime = 0;
+    });
   </script>
 
 </body>

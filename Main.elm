@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import Browser
 import Browser.Events exposing (onKeyDown, onKeyUp)
@@ -15,6 +15,9 @@ import Task exposing (perform)
 import ListWrapper.Dict as Dict exposing (Dict)
 import ListWrapper.Set as Set exposing (Set)
 
+port playMusic : String -> Cmd msg
+port stopMusic : () -> Cmd msg
+
 type alias Model =
     { score        : Dict Lane (List Notes)
     , visibleNotes : Dict Lane (List Notes)
@@ -27,6 +30,7 @@ type alias Model =
     , speed : Int
     , grades : List Evaluation
     , phase : Phase
+    , musicFile : String
     }
 
 initialModel : Model
@@ -42,6 +46,7 @@ initialModel =
     , speed = 0
     , grades = []
     , phase = Play
+    , musicFile = "./music/nc770.mp3"
     }
 
 type Notes
@@ -79,6 +84,7 @@ type Msg
     | Released Lane
     | Tick Posix
     | Start Posix
+    | Restart
     | None
 
 type Evaluation
@@ -116,23 +122,27 @@ update msg model =
             let
                 newModel = { model | spentTime = (posixToMillis posix) - model.startTime }
             in
-                ( newModel
+                newModel
                     |> removeExpiredVisibleNotes
                     |> changePhase
-                , Cmd.none
-                )
 
         Start posix ->
-            ( { model | startTime = posixToMillis posix }
-            , Cmd.none
+            ( { initialModel | startTime = posixToMillis posix }
+            , playMusic model.musicFile
             )
+
+        Restart ->
+            ( model
+            , perform Start Time.now
+            )
+
 
         None ->
             ( model
             , Cmd.none
             )
 
-changePhase : Model -> Model
+changePhase : Model -> ( Model, Cmd Msg )
 changePhase model =
     let
         spentTimeInBeats = getSpentTimeInBeats model
@@ -154,8 +164,14 @@ changePhase model =
                         else Play
                 _ -> Play
 
+        cmd =
+            if newPhase == Result
+            then stopMusic ()
+            else Cmd.none
     in
-        { model | phase = newPhase }
+        ( { model | phase = newPhase }
+        , cmd
+        )
 
 getSpentTimeInBeats model = model.spentTime * model.bpm // 60 * beatUnit // 1000
 
@@ -376,7 +392,7 @@ view model =
             Play ->
                 div [][ viewSvg, br[][] ]
             Result ->
-                div [][ viewGrades ]
+                div [][ viewGrades, br[][], "press R to retry" |> text ]
 
 pixelPerBeatUnit = 1 -- [px / beatUnit]
 judgeLine = 120 -- [px]
@@ -474,11 +490,16 @@ drawJudgeLine =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.batch
-        [ onKeyDown keyDownDecoder
-        , onKeyUp keyUpDecoder
-        , Time.every 16 Tick
-        ]
+    case model.phase of
+        Play ->
+            Sub.batch
+                [ onKeyDown keyDownDecoder
+                , onKeyUp keyUpDecoder
+                , Time.every 16 Tick
+                ]
+
+        Result ->
+            onKeyDown resultPhaseKeyDecoder
 
 keyDownDecoder =
     (field "key" string)
@@ -499,14 +520,20 @@ stringToLane str =
         "j" -> Just Right
         _   -> Nothing
 
-
+resultPhaseKeyDecoder : Decoder Msg
+resultPhaseKeyDecoder =
+    field "key" string
+        |> D.map (\key -> case key of
+            "r" -> Restart
+            _   -> None
+        )
 
 --Main--
 
 main : Program () Model Msg
 main =
     Browser.element
-        { init = \_->(initialModel, perform Start Time.now )
+        { init = \_->(initialModel, perform Start Time.now)
         , view = view
         , update = update
         , subscriptions = subscriptions
